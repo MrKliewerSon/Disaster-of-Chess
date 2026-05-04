@@ -40,6 +40,8 @@ STORMY_BIOME_LIGHT = (180, 180, 200)
 STORMY_BIOME_DARK = (150, 150, 180)
 NORMAL_BIOME_LIGHT = (240, 217, 181)
 NORMAL_BIOME_DARK = (181, 136, 99)
+FOG_BIOME_LIGHT = (200, 200, 200)
+FOG_BIOME_DARK = (170, 170, 170)
 
 class PieceType(Enum):
     PAWN = 1
@@ -245,7 +247,7 @@ class ChessBoard:
         elif not is_top and is_left:
             return "plains"
         else:
-            return "normal"
+            return "fog"
     
     def freeze_piece(self, row, col, turns=1):
         """Freeze a piece for specified turns"""
@@ -265,6 +267,16 @@ class ChessBoard:
     def is_piece_frozen(self, row, col):
         """Check if a piece is frozen"""
         return (row, col) in self.frozen_pieces
+    
+    def is_piece_hidden_from_opponent(self, row, col, viewer_color):
+        """Check if opponent's piece is hidden on fog biome from viewer's perspective"""
+        piece = self.get_piece(row, col)
+        if not piece:
+            return False
+        # Pieces are hidden if they're on fog biome AND belong to opponent
+        is_on_fog = self.get_biome(row, col) == "fog"
+        is_opponent_piece = piece.color != viewer_color
+        return is_on_fog and is_opponent_piece
 
     def get_blackout_bounds(self):
         """Return the row/col bounds for the current blackout quadrant."""
@@ -337,7 +349,7 @@ class ChessBoard:
         if ice_pieces:
             freeze_targets = random.sample(ice_pieces, min(2, len(ice_pieces)))
             for pos in freeze_targets:
-                self.freeze_piece(pos[0], pos[1], turns=1)
+                self.freeze_piece(pos[0], pos[1], turns=2)
             self.biome_message = f"Ice biome: {len(freeze_targets)} pieces frozen!"
         else:
             self.biome_message = "Ice biome: no pieces to freeze!"
@@ -774,6 +786,22 @@ class Game:
         self.wind_counter = 0
         self.lightning_counter = 0
         self.freeze_counter = 0
+    
+    def get_display_coords(self, board_row, board_col):
+        """Convert board coordinates to display coordinates (flips if player is black)"""
+        if self.player_color == PieceColor.BLACK:
+            display_row = BOARD_SIZE - 1 - board_row
+            display_col = BOARD_SIZE - 1 - board_col
+            return display_row, display_col
+        return board_row, board_col
+    
+    def get_board_coords(self, display_row, display_col):
+        """Convert display coordinates back to board coordinates (unflips if player is black)"""
+        if self.player_color == PieceColor.BLACK:
+            board_row = BOARD_SIZE - 1 - display_row
+            board_col = BOARD_SIZE - 1 - display_col
+            return board_row, board_col
+        return display_row, display_col
         
     def handle_click(self, pos):
         x, y = pos
@@ -781,8 +809,11 @@ class Game:
         # Check if click is on board
         if BOARD_OFFSET_X <= x < BOARD_OFFSET_X + BOARD_SIZE * SQUARE_SIZE and \
            BOARD_OFFSET_Y <= y < BOARD_OFFSET_Y + BOARD_SIZE * SQUARE_SIZE:
-            col = (x - BOARD_OFFSET_X) // SQUARE_SIZE
-            row = (y - BOARD_OFFSET_Y) // SQUARE_SIZE
+            display_col = (x - BOARD_OFFSET_X) // SQUARE_SIZE
+            display_row = (y - BOARD_OFFSET_Y) // SQUARE_SIZE
+            
+            # Convert display coords to board coords
+            row, col = self.get_board_coords(display_row, display_col)
             
             # Player can only interact if it's their turn
             if self.board.current_player != self.player_color:
@@ -836,53 +867,58 @@ class Game:
             self.lightning_counter = 0
     
     def draw_board(self):
-        for row in range(BOARD_SIZE):
-            for col in range(BOARD_SIZE):
-                x = BOARD_OFFSET_X + col * SQUARE_SIZE
-                y = BOARD_OFFSET_Y + row * SQUARE_SIZE
+        for board_row in range(BOARD_SIZE):
+            for board_col in range(BOARD_SIZE):
+                display_row, display_col = self.get_display_coords(board_row, board_col)
+                x = BOARD_OFFSET_X + display_col * SQUARE_SIZE
+                y = BOARD_OFFSET_Y + display_row * SQUARE_SIZE
                 
                 # Get biome for this square and choose color accordingly
-                biome = self.board.get_biome(row, col)
+                biome = self.board.get_biome(board_row, board_col)
                 if biome == "ice":
-                    color = ICE_BIOME_LIGHT if (row + col) % 2 == 0 else ICE_BIOME_DARK
+                    color = ICE_BIOME_LIGHT if (board_row + board_col) % 2 == 0 else ICE_BIOME_DARK
                 elif biome == "plains":
-                    color = PLAINS_BIOME_LIGHT if (row + col) % 2 == 0 else PLAINS_BIOME_DARK
+                    color = PLAINS_BIOME_LIGHT if (board_row + board_col) % 2 == 0 else PLAINS_BIOME_DARK
                 elif biome == "stormy":
-                    color = STORMY_BIOME_LIGHT if (row + col) % 2 == 0 else STORMY_BIOME_DARK
+                    color = STORMY_BIOME_LIGHT if (board_row + board_col) % 2 == 0 else STORMY_BIOME_DARK
+                elif biome == "fog":
+                    color = FOG_BIOME_LIGHT if (board_row + board_col) % 2 == 0 else FOG_BIOME_DARK
                 else:
-                    color = LIGHT_SQUARE if (row + col) % 2 == 0 else DARK_SQUARE
+                    color = LIGHT_SQUARE if (board_row + board_col) % 2 == 0 else DARK_SQUARE
                 
                 pygame.draw.rect(self.screen, color, (x, y, SQUARE_SIZE, SQUARE_SIZE))
                 
                 # Highlight selected piece
-                if self.board.selected_piece == (row, col) and not self.board.is_in_blackout(row, col):
+                if self.board.selected_piece == (board_row, board_col) and not self.board.is_in_blackout(board_row, board_col):
                     pygame.draw.rect(self.screen, SELECTED, (x, y, SQUARE_SIZE, SQUARE_SIZE), 5)
                 
                 # Highlight valid moves
-                if (row, col) in self.board.valid_moves and not self.board.is_in_blackout(row, col):
+                if (board_row, board_col) in self.board.valid_moves and not self.board.is_in_blackout(board_row, board_col):
                     pygame.draw.circle(self.screen, HIGHLIGHT, (x + SQUARE_SIZE // 2, y + SQUARE_SIZE // 2), 10)
                 
                 # Show frozen indicator
-                if self.board.is_piece_frozen(row, col):
+                if self.board.is_piece_frozen(board_row, board_col):
                     pygame.draw.rect(self.screen, (0, 0, 255), (x, y, SQUARE_SIZE, SQUARE_SIZE), 3)
         
         # Draw coordinate labels
         coord_font = pygame.font.Font(None, 20)
         # Column labels (A-H)
-        for col in range(BOARD_SIZE):
-            label = chr(ord('A') + col)
+        for board_col in range(BOARD_SIZE):
+            display_col = board_col if self.player_color == PieceColor.WHITE else BOARD_SIZE - 1 - board_col
+            label = chr(ord('A') + board_col)
             text = coord_font.render(label, True, BLACK)
-            x = BOARD_OFFSET_X + col * SQUARE_SIZE + SQUARE_SIZE // 2
+            x = BOARD_OFFSET_X + display_col * SQUARE_SIZE + SQUARE_SIZE // 2
             y = BOARD_OFFSET_Y + BOARD_SIZE * SQUARE_SIZE + 5
             text_rect = text.get_rect(center=(x, y))
             self.screen.blit(text, text_rect)
         
         # Row labels (8-1, from top to bottom)
-        for row in range(BOARD_SIZE):
-            label = str(8 - row)
+        for board_row in range(BOARD_SIZE):
+            display_row = board_row if self.player_color == PieceColor.WHITE else BOARD_SIZE - 1 - board_row
+            label = str(8 - board_row)
             text = coord_font.render(label, True, BLACK)
             x = BOARD_OFFSET_X - 25
-            y = BOARD_OFFSET_Y + row * SQUARE_SIZE + SQUARE_SIZE // 2
+            y = BOARD_OFFSET_Y + display_row * SQUARE_SIZE + SQUARE_SIZE // 2
             text_rect = text.get_rect(center=(x, y))
             self.screen.blit(text, text_rect)
 
@@ -896,10 +932,11 @@ class Game:
             return
 
         min_row, max_row, min_col, max_col = bounds
-        for row in range(min_row, max_row + 1):
-            for col in range(min_col, max_col + 1):
-                x = BOARD_OFFSET_X + col * SQUARE_SIZE
-                y = BOARD_OFFSET_Y + row * SQUARE_SIZE
+        for board_row in range(min_row, max_row + 1):
+            for board_col in range(min_col, max_col + 1):
+                display_row, display_col = self.get_display_coords(board_row, board_col)
+                x = BOARD_OFFSET_X + display_col * SQUARE_SIZE
+                y = BOARD_OFFSET_Y + display_row * SQUARE_SIZE
                 pygame.draw.rect(self.screen, BLACK, (x, y, SQUARE_SIZE, SQUARE_SIZE))
 
     def draw_lightning_overlay(self):
@@ -907,9 +944,10 @@ class Game:
         if self.lightning_flash_timer <= 0 or self.lightning_flash_square is None:
             return
 
-        row, col = self.lightning_flash_square
-        x = BOARD_OFFSET_X + col * SQUARE_SIZE
-        y = BOARD_OFFSET_Y + row * SQUARE_SIZE
+        board_row, board_col = self.lightning_flash_square
+        display_row, display_col = self.get_display_coords(board_row, board_col)
+        x = BOARD_OFFSET_X + display_col * SQUARE_SIZE
+        y = BOARD_OFFSET_Y + display_row * SQUARE_SIZE
         flash_surface = pygame.Surface((SQUARE_SIZE, SQUARE_SIZE), pygame.SRCALPHA)
         flash_surface.fill((255, 255, 0, 140))
         self.screen.blit(flash_surface, (x, y))
@@ -936,12 +974,17 @@ class Game:
             PieceType.KING: "♚"
         }
         
-        for row in range(BOARD_SIZE):
-            for col in range(BOARD_SIZE):
-                piece = self.board.board[row][col]
+        for board_row in range(BOARD_SIZE):
+            for board_col in range(BOARD_SIZE):
+                piece = self.board.board[board_row][board_col]
                 if piece:
-                    x = BOARD_OFFSET_X + col * SQUARE_SIZE + SQUARE_SIZE // 2
-                    y = BOARD_OFFSET_Y + row * SQUARE_SIZE + SQUARE_SIZE // 2
+                    # Skip drawing opponent pieces hidden on fog biome
+                    if self.board.is_piece_hidden_from_opponent(board_row, board_col, self.player_color):
+                        continue
+                    
+                    display_row, display_col = self.get_display_coords(board_row, board_col)
+                    x = BOARD_OFFSET_X + display_col * SQUARE_SIZE + SQUARE_SIZE // 2
+                    y = BOARD_OFFSET_Y + display_row * SQUARE_SIZE + SQUARE_SIZE // 2
                     
                     # Select the right symbol set based on piece color
                     symbols = white_pieces if piece.color == PieceColor.WHITE else black_pieces

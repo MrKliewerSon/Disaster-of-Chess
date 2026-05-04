@@ -2,6 +2,8 @@ import pygame
 import sys
 import math
 import random
+import socket
+import json
 from enum import Enum
 from dataclasses import dataclass
 
@@ -554,12 +556,207 @@ class ChessBoard:
         return True
 
 
-class Game:
+class RoomMenu:
+    """Menu to select hosting or joining a room."""
     def __init__(self):
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        pygame.display.set_caption("Chess with Natural Disasters")
+        pygame.display.set_caption("Chess Disasters - Room Menu")
+        self.clock = pygame.time.Clock()
+        self.font_large = pygame.font.Font(None, 48)
+        self.font_medium = pygame.font.Font(None, 36)
+        self.font_small = pygame.font.Font(None, 24)
+        self.room_name = ""
+        self.mode = None  # None, 'host', 'join'
+        
+    def handle_input(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_h:
+                self.mode = "host"
+                return None
+            elif event.key == pygame.K_j:
+                self.mode = "join"
+                return None
+            elif self.mode:
+                if event.key == pygame.K_BACKSPACE:
+                    self.room_name = self.room_name[:-1]
+                elif event.key == pygame.K_RETURN:
+                    if self.room_name.strip():
+                        if self.mode == "host":
+                            return ("start", self.room_name, True, None)
+                        elif self.mode == "join":
+                            return ("start", self.room_name, False, "localhost")
+                else:
+                    if len(self.room_name) < 30:
+                        self.room_name += event.unicode
+        return None
+    
+    def draw(self):
+        self.screen.fill(WHITE)
+        
+        if self.mode is None:
+            # Mode selection
+            title_text = self.font_large.render("Chess Disasters", True, BLACK)
+            title_rect = title_text.get_rect(center=(WINDOW_WIDTH // 2, 50))
+            self.screen.blit(title_text, title_rect)
+            
+            mode_text = self.font_medium.render("Select Game Mode:", True, BLACK)
+            self.screen.blit(mode_text, (WINDOW_WIDTH // 2 - 150, 150))
+            
+            host_text = self.font_medium.render("[H] Host Room (You are WHITE)", True, (0, 100, 200))
+            self.screen.blit(host_text, (WINDOW_WIDTH // 2 - 200, 250))
+            
+            join_text = self.font_medium.render("[J] Join Room (You are BLACK)", True, (100, 100, 100))
+            self.screen.blit(join_text, (WINDOW_WIDTH // 2 - 200, 320))
+        else:
+            # Setup screen
+            title_text = self.font_large.render(f"{'Host' if self.mode == 'host' else 'Join'} Room", True, BLACK)
+            title_rect = title_text.get_rect(center=(WINDOW_WIDTH // 2, 50))
+            self.screen.blit(title_text, title_rect)
+            
+            # Room name input
+            label_text = self.font_medium.render("Room Name:", True, BLACK)
+            self.screen.blit(label_text, (150, 150))
+            
+            input_box_rect = pygame.Rect(150, 200, 700, 50)
+            pygame.draw.rect(self.screen, LIGHT_GRAY, input_box_rect)
+            pygame.draw.rect(self.screen, DARK_GRAY, input_box_rect, 2)
+            
+            room_text = self.font_medium.render(self.room_name or "Room name...", True, BLACK if self.room_name else GRAY)
+            self.screen.blit(room_text, (160, 210))
+            
+            instr_text = self.font_small.render("ENTER to start", True, GRAY)
+            self.screen.blit(instr_text, (WINDOW_WIDTH // 2 - instr_text.get_width() // 2, 320))
+        
+        pygame.display.flip()
+    
+    def run(self):
+        running = True
+        while running:
+            self.clock.tick(60)
+            
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return None
+                result = self.handle_input(event)
+                if result:
+                    return result
+            
+            self.draw()
+        
+        return None
+
+
+class NetworkManager:
+    """Multiplayer networking for two-player chess."""
+    def __init__(self, is_server=True, host="localhost", port=5555):
+        self.is_server = is_server
+        self.host = host
+        self.port = port
+        self.socket = None
+        self.opponent_socket = None
+        self.connected = False
+        
+    def start_server(self):
+        """Start listening for a client."""
+        try:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.socket.bind((self.host, self.port))
+            self.socket.listen(1)
+            print(f"Server listening on {self.host}:{self.port}")
+            self.opponent_socket, addr = self.socket.accept()
+            self.connected = True
+            print(f"Client connected from {addr}")
+            return True
+        except Exception as e:
+            print(f"Server error: {e}")
+            return False
+    
+    def connect_to_server(self):
+        """Connect to a server."""
+        try:
+            self.opponent_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.opponent_socket.connect((self.host, self.port))
+            self.connected = True
+            print(f"Connected to server at {self.host}:{self.port}")
+            return True
+        except Exception as e:
+            print(f"Connection error: {e}")
+            return False
+    
+    def send_move(self, from_row, from_col, to_row, to_col):
+        """Send move to opponent."""
+        if not self.connected or not self.opponent_socket:
+            return False
+        try:
+            move_data = json.dumps({
+                "type": "move",
+                "from": [from_row, from_col],
+                "to": [to_row, to_col]
+            })
+            self.opponent_socket.sendall(move_data.encode('utf-8') + b'\n')
+            return True
+        except Exception as e:
+            print(f"Send error: {e}")
+            self.connected = False
+            return False
+    
+    def receive_move(self, timeout=0.1):
+        """Receive move from opponent (non-blocking)."""
+        if not self.connected or not self.opponent_socket:
+            return None
+        try:
+            self.opponent_socket.settimeout(timeout)
+            data = self.opponent_socket.recv(1024).decode('utf-8').strip()
+            if data:
+                msg = json.loads(data)
+                if msg.get("type") == "move":
+                    return tuple(msg["from"]), tuple(msg["to"])
+        except socket.timeout:
+            pass
+        except Exception as e:
+            print(f"Receive error: {e}")
+            self.connected = False
+        return None
+    
+    def close(self):
+        """Close connection."""
+        if self.opponent_socket:
+            try:
+                self.opponent_socket.close()
+            except:
+                pass
+        if self.socket:
+            try:
+                self.socket.close()
+            except:
+                pass
+        self.connected = False
+
+
+class Game:
+    def __init__(self, room_name="Default Room", is_server=True, opponent_host="localhost"):
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption(f"Chess with Natural Disasters - {room_name}")
         self.clock = pygame.time.Clock()
         self.board = ChessBoard()
+        self.room_name = room_name
+        
+        # Player color assignment: HOST=WHITE, CLIENT=BLACK
+        self.player_color = PieceColor.WHITE if is_server else PieceColor.BLACK
+        self.is_server = is_server
+        
+        # Networking
+        self.network_manager = NetworkManager(is_server=is_server, host=opponent_host if not is_server else "0.0.0.0")
+        self.opponent_connected = False
+        if is_server:
+            print("Waiting for opponent...")
+            if self.network_manager.start_server():
+                self.opponent_connected = True
+        else:
+            print(f"Connecting to {opponent_host}...")
+            if self.network_manager.connect_to_server():
+                self.opponent_connected = True
         
         self.font = pygame.font.Font(None, 36)
         # Use Segoe UI Symbol which supports Unicode chess symbols
@@ -587,17 +784,34 @@ class Game:
             col = (x - BOARD_OFFSET_X) // SQUARE_SIZE
             row = (y - BOARD_OFFSET_Y) // SQUARE_SIZE
             
+            # Player can only interact if it's their turn
+            if self.board.current_player != self.player_color:
+                return
+            
             if self.board.selected_piece:
                 if (row, col) in self.board.valid_moves:
+                    from_row, from_col = self.board.selected_piece
                     if self.board.move_piece(row, col):
                         self.turn_count += 1
                         self.check_auto_triggers()
+                        # Send move to opponent over network
+                        if self.opponent_connected:
+                            self.network_manager.send_move(from_row, from_col, row, col)
                     else:
-                        self.board.select_piece(row, col)
+                        # Try to select a different piece (only own pieces)
+                        piece = self.board.get_piece(row, col)
+                        if piece and piece.color == self.player_color:
+                            self.board.select_piece(row, col)
                 else:
-                    self.board.select_piece(row, col)
+                    # Try to select a different piece (only own pieces)
+                    piece = self.board.get_piece(row, col)
+                    if piece and piece.color == self.player_color:
+                        self.board.select_piece(row, col)
             else:
-                self.board.select_piece(row, col)
+                # Can only select own pieces
+                piece = self.board.get_piece(row, col)
+                if piece and piece.color == self.player_color:
+                    self.board.select_piece(row, col)
     
     def check_auto_triggers(self):
         """Check if any disasters should be triggered based on turn count"""
@@ -753,6 +967,18 @@ class Game:
         player_text = self.font.render(f"{player_name} TO MOVE", True, BLACK)
         self.screen.blit(status_text, (panel_x, panel_y + 10))
         self.screen.blit(player_text, (panel_x, panel_y + 34))
+        
+        # Draw room name and player color
+        room_text = self.small_font.render(f"Room: {self.room_name}", True, DARK_GRAY)
+        self.screen.blit(room_text, (panel_x, panel_y + 55))
+        
+        color_text = self.small_font.render(f"You are: {'WHITE' if self.player_color == PieceColor.WHITE else 'BLACK'}", True, (0, 100, 200) if self.player_color == PieceColor.WHITE else (50, 50, 50))
+        self.screen.blit(color_text, (panel_x, panel_y + 75))
+        
+        conn_status = "Connected" if self.opponent_connected else "Waiting..."
+        conn_color = (0, 150, 0) if self.opponent_connected else (200, 100, 0)
+        conn_text = self.small_font.render(conn_status, True, conn_color)
+        self.screen.blit(conn_text, (panel_x, panel_y + 95))
 
         # Draw game state messages (check, checkmate, stalemate)
         if self.board.game_message:
@@ -792,10 +1018,30 @@ class Game:
             self.draw_ui()
             
             pygame.display.flip()
+            
+            # Receive opponent moves
+            if self.opponent_connected:
+                opponent_move = self.network_manager.receive_move()
+                if opponent_move:
+                    from_pos, to_pos = opponent_move
+                    # Set up the board state for opponent's move
+                    self.board.selected_piece = from_pos
+                    self.board.valid_moves = self.board.get_valid_moves(from_pos[0], from_pos[1])
+                    # Apply the move
+                    if self.board.move_piece(to_pos[0], to_pos[1]):
+                        self.turn_count += 1
+                        self.check_auto_triggers()
         
+        if self.network_manager:
+            self.network_manager.close()
         pygame.quit()
         sys.exit()
 
 if __name__ == "__main__":
-    game = Game()
-    game.run()
+    menu = RoomMenu()
+    result = menu.run()
+    
+    if result:
+        room_name, is_server, opponent_host = result[1], result[2], result[3]
+        game = Game(room_name=room_name, is_server=is_server, opponent_host=opponent_host)
+        game.run()

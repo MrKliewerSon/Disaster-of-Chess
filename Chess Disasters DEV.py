@@ -344,7 +344,7 @@ class ChessBoard:
         if ice_pieces:
             freeze_targets = random.sample(ice_pieces, min(2, len(ice_pieces)))
             for pos in freeze_targets:
-                self.freeze_piece(pos[0], pos[1], turns=1)
+                self.freeze_piece(pos[0], pos[1], turns=2)
             self.biome_message = f"Ice biome: {len(freeze_targets)} pieces frozen!"
         else:
             self.biome_message = "Ice biome: no pieces to freeze!"

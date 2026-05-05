@@ -786,12 +786,55 @@ class Game:
         self.piece_font = pygame.font.SysFont("Segoe UI Symbol", 60)
         
         self.small_font = pygame.font.Font(None, 24)
+        self.tiny_font = pygame.font.Font(None, 18)
         self.large_font = pygame.font.Font(None, 48)
         self.wind_triggered = False
         self.wind_timer = 0
         self.turn_count = 1
         self.lightning_flash_square = None
         self.lightning_flash_timer = 0
+
+    def draw_wind_overlay(self):
+        """Draw moving dust and wind streaks across the plains biome while wind is active."""
+        if self.wind_timer <= 0:
+            return
+
+        overlay = pygame.Surface((BOARD_SIZE * SQUARE_SIZE, 2 * SQUARE_SIZE), pygame.SRCALPHA)
+        total_wind_frames = 30
+        progress = 1.0 - (self.wind_timer / total_wind_frames)
+        fade_alpha = int(220 * math.sin(math.pi * progress))
+        fade_alpha = max(0, min(220, fade_alpha))
+        phase = (30 - self.wind_timer) % 24
+
+        for row_offset in range(2):
+            y_base = row_offset * SQUARE_SIZE + SQUARE_SIZE // 2
+            for index in range(5):
+                x_start = -35 + index * 55 - phase * 6
+                streak_alpha = max(0, fade_alpha - index * 18)
+                dust_alpha = max(0, fade_alpha - index * 22)
+
+                pygame.draw.line(
+                    overlay,
+                    (255, 255, 255, streak_alpha),
+                    (x_start, y_base - 10),
+                    (x_start + 55, y_base - 2),
+                    4,
+                )
+                pygame.draw.line(
+                    overlay,
+                    (220, 240, 255, streak_alpha),
+                    (x_start + 8, y_base + 4),
+                    (x_start + 70, y_base + 12),
+                    2,
+                )
+
+                dust_x = x_start + 15
+                dust_y = y_base + 12 + (index % 3) * 8
+                dust_size = 2 + (index % 2)
+                pygame.draw.circle(overlay, (210, 195, 160, dust_alpha), (dust_x, dust_y), dust_size)
+                pygame.draw.circle(overlay, (235, 225, 200, max(0, dust_alpha - 30)), (dust_x + 7, dust_y - 3), 1)
+
+        self.screen.blit(overlay, (BOARD_OFFSET_X, BOARD_OFFSET_Y + 4 * SQUARE_SIZE))
         
         # Auto-trigger counters
         self.wind_counter = 0
@@ -855,7 +898,6 @@ class Game:
                 if piece and piece.color == self.player_color:
                     self.board.select_piece(row, col)
     
-    def check_auto_triggers(self):
         """Check if any disasters should be triggered based on turn count"""
         self.wind_counter += 1
         self.lightning_counter += 1
@@ -1044,6 +1086,25 @@ class Game:
             blackout_text = self.small_font.render(f"Blackout active: {self.board.blackout_turns_left} turns left", True, RED)
             self.screen.blit(blackout_text, (panel_x, panel_y + 80))
 
+        # Rules panel for biomes and disasters
+        rules_title = self.small_font.render("Rules", True, BLACK)
+        self.screen.blit(rules_title, (panel_x, panel_y + 135))
+
+        rules_lines = [
+            "ICE: freezes 2 pieces",
+            "ICE: lasts 2 turns",
+            "PLAINS: wind pushes left",
+            "STORMY: lightning removes",
+            "STORMY: 25% blackout chance",
+            "FOG: hides enemy pieces",
+        ]
+
+        rule_y = panel_y + 165
+        for rule_text in rules_lines:
+            rendered_rule = self.tiny_font.render(rule_text, True, DARK_GRAY)
+            self.screen.blit(rendered_rule, (panel_x, rule_y))
+            rule_y += 20
+
         if self.wind_timer > 0:
             effect_text = self.small_font.render("WIND BLOWING!", True, RED)
             self.screen.blit(effect_text, (panel_x, panel_y + 125))
@@ -1068,6 +1129,7 @@ class Game:
             self.draw_board()
             self.draw_pieces()
             self.draw_lightning_overlay()
+            self.draw_wind_overlay()
             self.draw_blackout_overlay()
             self.draw_ui()
             

@@ -62,6 +62,7 @@ class Piece:
     row: int
     col: int
     has_moved: bool = False  # Track if piece has moved (for castling and pawn promotion)
+    frozen_turns: int = 0
 
 class ChessBoard:
     def __init__(self):
@@ -77,7 +78,7 @@ class ChessBoard:
         self.blackout_active = False
         self.blackout_turns_left = 0
         self.blackout_quadrant = None
-        self.frozen_pieces = {}  # {(row, col): turns_left}
+        # Freeze tracking moved onto piece instances (`Piece.frozen_turns`)
         self.biome_message = ""
         
     def initialize_pieces(self):
@@ -149,10 +150,16 @@ class ChessBoard:
                         moves.append((new_row, new_col))
             
             # En passant
+            # en_passant_target stores the landing square of a pawn that moved two squares
             if self.en_passant_target:
                 en_row, en_col = self.en_passant_target
+                # If an opposing pawn is adjacent (same row) and the target pawn is adjacent column
                 if row == en_row and abs(col - en_col) == 1:
-                    moves.append((en_row - direction, en_col))
+                    # capture destination is one step forward (direction) into the pawn's passing square
+                    capture_row = row + direction
+                    capture_col = en_col
+                    if 0 <= capture_row < BOARD_SIZE:
+                        moves.append((capture_row, capture_col))
         
         elif piece.piece_type == PieceType.ROOK:
             moves = self._get_sliding_moves(row, col, [(0, 1), (0, -1), (1, 0), (-1, 0)])
@@ -251,22 +258,22 @@ class ChessBoard:
     
     def freeze_piece(self, row, col, turns=1):
         """Freeze a piece for specified turns"""
-        if self.board[row][col] is not None:
-            self.frozen_pieces[(row, col)] = turns
+        piece = self.board[row][col]
+        if piece is not None:
+            piece.frozen_turns = max(piece.frozen_turns, turns)
     
     def decrement_freeze_timers(self):
         """Decrement freeze timers and remove expired freezes"""
-        expired = []
-        for pos, turns in self.frozen_pieces.items():
-            self.frozen_pieces[pos] -= 1
-            if self.frozen_pieces[pos] <= 0:
-                expired.append(pos)
-        for pos in expired:
-            del self.frozen_pieces[pos]
+        for row in range(BOARD_SIZE):
+            for col in range(BOARD_SIZE):
+                piece = self.board[row][col]
+                if piece and piece.frozen_turns > 0:
+                    piece.frozen_turns -= 1
     
     def is_piece_frozen(self, row, col):
         """Check if a piece is frozen"""
-        return (row, col) in self.frozen_pieces
+        piece = self.get_piece(row, col)
+        return bool(piece and piece.frozen_turns > 0)
     
     def is_piece_hidden_from_opponent(self, row, col, viewer_color):
         """Check if opponent's piece is hidden on fog biome from viewer's perspective"""
@@ -509,11 +516,15 @@ class ChessBoard:
         piece = self.board[from_row][from_col]
         captured_piece = self.board[to_row][to_col]
         
-        # Handle en passant
+        # Handle en passant: moving diagonally into an empty square captures the pawn that moved two
         if piece.piece_type == PieceType.PAWN and to_col != from_col and captured_piece is None:
-            # This is en passant
-            pawn_row = from_row
-            self.board[pawn_row][to_col] = None
+            # captured pawn is on the from_row at the destination column
+            captured_row = from_row
+            captured_col = to_col
+            if 0 <= captured_row < BOARD_SIZE and 0 <= captured_col < BOARD_SIZE:
+                maybe_captured = self.board[captured_row][captured_col]
+                if maybe_captured and maybe_captured.piece_type == PieceType.PAWN and maybe_captured.color != piece.color:
+                    self.board[captured_row][captured_col] = None
         
         # Move piece
         self.board[from_row][from_col] = None
@@ -543,9 +554,9 @@ class ChessBoard:
                 rook.col = 3
             rook.has_moved = True
         
-        # Update en passant target
+        # Update en passant target: store the pawn's landing square when it moved two squares
         if piece.piece_type == PieceType.PAWN and abs(to_row - from_row) == 2:
-            self.en_passant_target = (from_row + (to_row - from_row) // 2, from_col)
+            self.en_passant_target = (to_row, to_col)
         else:
             self.en_passant_target = None
         

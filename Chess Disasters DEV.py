@@ -580,6 +580,48 @@ class Game:
         self.turn_count = 1
         self.lightning_flash_square = None
         self.lightning_flash_timer = 0
+
+    def draw_wind_overlay(self):
+        """Draw moving dust and wind streaks across the plains biome while wind is active."""
+        if self.wind_timer <= 0:
+            return
+
+        overlay = pygame.Surface((BOARD_SIZE * SQUARE_SIZE, 2 * SQUARE_SIZE), pygame.SRCALPHA)
+        total_wind_frames = 30
+        progress = 1.0 - (self.wind_timer / total_wind_frames)
+        fade_alpha = 90 + int(140 * math.sin(math.pi * progress))
+        fade_alpha = max(90, min(230, fade_alpha))
+        phase = (30 - self.wind_timer) % 24
+
+        for row_offset in range(2):
+            y_base = row_offset * SQUARE_SIZE + SQUARE_SIZE // 2
+            for index in range(5):
+                x_start = 10 + index * 60 - phase * 5
+                streak_alpha = max(110, fade_alpha - index * 10)
+                dust_alpha = max(130, fade_alpha - index * 12)
+
+                pygame.draw.line(
+                    overlay,
+                    (255, 255, 255, streak_alpha),
+                    (x_start, y_base - 10),
+                    (x_start + 55, y_base - 2),
+                    4,
+                )
+                pygame.draw.line(
+                    overlay,
+                    (220, 240, 255, streak_alpha),
+                    (x_start + 8, y_base + 4),
+                    (x_start + 70, y_base + 12),
+                    2,
+                )
+
+                dust_x = x_start + 12
+                dust_y = y_base + 12 + (index % 3) * 8
+                dust_size = 3 + (index % 2)
+                pygame.draw.circle(overlay, (205, 180, 140, dust_alpha), (dust_x, dust_y), dust_size)
+                pygame.draw.circle(overlay, (240, 225, 195, max(0, dust_alpha - 20)), (dust_x + 5, dust_y - 2), 2)
+
+        self.screen.blit(overlay, (BOARD_OFFSET_X, BOARD_OFFSET_Y + 4 * SQUARE_SIZE))
         
     def handle_click(self, pos):
         x, y = pos
@@ -800,6 +842,7 @@ class Game:
             self.draw_board()
             self.draw_pieces()
             self.draw_lightning_overlay()
+            self.draw_wind_overlay()
             self.draw_blackout_overlay()
             self.draw_ui()
             
